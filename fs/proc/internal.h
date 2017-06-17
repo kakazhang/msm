@@ -15,6 +15,11 @@
 #include <linux/atomic.h>
 #include <linux/binfmts.h>
 
+//kakazhang-2017-06-17 page reclaim type
+#define RECLAIM_FILE 1
+#define RECLAIM_ANON 2
+#define RECLAIM_ALL 3
+
 struct ctl_table_header;
 struct mempolicy;
 
@@ -291,6 +296,8 @@ extern const struct file_operations proc_pid_smaps_operations;
 extern const struct file_operations proc_tid_smaps_operations;
 extern const struct file_operations proc_clear_refs_operations;
 extern const struct file_operations proc_pagemap_operations;
+//kakazhang-2017-06-17 add reclaim file operations
+extern const struct file_operations proc_reclaim_operations;
 
 extern unsigned long task_vsize(struct mm_struct *);
 extern unsigned long task_statm(struct mm_struct *,

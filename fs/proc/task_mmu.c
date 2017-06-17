@@ -870,6 +870,134 @@ const struct file_operations proc_clear_refs_operations = {
 	.llseek		= noop_llseek,
 };
 
+/*kakazhang-2017-06-17 process reclaim operations*/
+static inline bool vma_is_anonymous(struct vm_area_struct *vma)
+{
+    return !vma->vm_ops;
+}
+
+static inline int is_page_file_cache(struct page *page) {
+    return !PageSwapBacked(page);
+}
+
+static int reclaim_pte_page(pmd_t *pmd, unsigned long addr, unsigned long end,
+	struct mm_walk *walk) {
+    struct vm_area_struct *vma = walk->private;
+    pte_t *pte, ptent;
+    spinlock_t *ptl;
+    struct page *page;
+    LIST_HEAD(pages_list);
+    int isolate;
+    split_huge_page_pmd(vma, addr, pmd);
+    if (pmd_trans_unstable(pmd))
+	    return 0;
+cont:
+    isolate = 0;
+    pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
+    for (; addr != end; pte++, addr += PAGE_SIZE) {
+	    ptent = *pte;
+	    if (!pte_present(ptent))
+		    continue;
+
+        page = vm_normal_page(vma, addr, ptent);
+	    if (!page)
+		    continue;
+
+        if (page_mapcount(page) != 1)
+            continue;
+        if (isolate_lru_page(page))
+            continue;
+
+        isolate++;
+        list_add(&page->lru, &pages_list);
+        inc_zone_page_state(page, NR_ISOLATED_ANON + is_page_file_cache(page));
+
+        if (isolate >= SWAP_CLUSTER_MAX)
+            break;
+    }
+    pte_unmap_unlock(pte - 1, ptl);
+    cond_resched();
+
+    if (addr != end)
+        goto cont;
+
+	 reclaim_pages_from_list(&pages_list);
+
+    return 0;
+}
+
+ssize_t reclaim_read(struct file *fp, char __user *buf, size_t count, loff_t *ppos) {
+    char buffer[PROC_NUMBUF];
+    size_t len;
+
+    len = snprintf(buffer, sizeof(buffer), "%s\n", "kaka is back");
+    return simple_read_from_buffer(buf, count, ppos, buffer, len);
+}
+
+static ssize_t reclaim_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
+	struct task_struct *task;
+	char buffer[PROC_NUMBUF];
+	struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	int type;
+	int rv;
+
+	memset(buffer, 0, sizeof(buffer));
+	if (count > sizeof(buffer) - 1)
+		count = sizeof(buffer) - 1;
+	if (copy_from_user(buffer, buf, count))
+		return -EFAULT;
+	rv = kstrtoint(strstrip(buffer), 10, &type);
+	if (rv < 0)
+		return rv;
+	if ((type < RECLAIM_FILE || type > RECLAIM_ALL))
+		return -EINVAL;
+	task = get_proc_task(file_inode(file));
+	if (!task)
+		return -ESRCH;
+	mm = get_task_mm(task);
+	if (mm) {
+		struct mm_walk clear_refs_walk = {
+			.pmd_entry = reclaim_pte_page,
+			.mm = mm,
+		};
+
+		down_read(&mm->mmap_sem);
+		for (vma = mm->mmap; vma; vma = vma->vm_next) {
+			clear_refs_walk.private = vma;
+			if (is_vm_hugetlb_page(vma))
+				continue;
+			/*
+			 * Writing 1 to /proc/pid/reclaim affects all pages.
+			 *
+			 * Writing 2 to /proc/pid/reclaim only affects
+			 * Anonymous pages.
+			 *
+			 * Writing 3 to /proc/pid/reclaim only affects file
+			 * mapped pages.
+			 */
+			if (type == RECLAIM_ANON && vma->vm_file)
+				continue;
+			if (type == RECLAIM_FILE && !vma->vm_file)
+				continue;
+			walk_page_range(vma->vm_start, vma->vm_end,
+					&clear_refs_walk);
+		}
+		flush_tlb_mm(mm);
+		up_read(&mm->mmap_sem);
+		mmput(mm);
+	}
+	put_task_struct(task);
+
+	return count;
+}
+
+const struct file_operations proc_reclaim_operations = {
+    .read = reclaim_read,
+	.write = reclaim_write,
+	.llseek = noop_llseek,
+};
+
 typedef struct {
 	u64 pme;
 } pagemap_entry_t;

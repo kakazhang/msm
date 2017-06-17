@@ -47,6 +47,10 @@ struct anon_vma {
 	struct rb_root rb_root;	/* Interval tree of private "related" vmas */
 };
 
+/*kakazhang-2017-06-17 add reclaim pages interface*/
+extern unsigned long reclaim_pages_from_list(struct list_head *page_list);
+extern int isolate_lru_page(struct page *page);
+
 /*
  * The copy-on-write semantics of fork mean that an anon_vma
  * can become associated with multiple processes. Furthermore,

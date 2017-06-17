@@ -130,7 +130,7 @@ struct scan_control {
 /*
  * From 0 .. 100.  Higher means more swappy.
  */
-int vm_swappiness = 60;
+int vm_swappiness = 20;
 unsigned long vm_total_pages;	/* The total number of pages which the VM controls */
 
 #ifdef CONFIG_KSWAPD_CPU_AFFINITY_MASK
@@ -1162,6 +1162,73 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 	list_splice(&clean_pages, page_list);
 	__mod_zone_page_state(zone, NR_ISOLATED_FILE, -ret);
 	return ret;
+}
+
+unsigned long reclaim_pages_from_list(struct list_head *page_list) {
+    struct scan_control sc = {
+        .gfp_mask = GFP_KERNEL,
+        .may_writepage = 1,
+        .may_unmap = 1,
+        .may_swap = 1,
+    };
+	unsigned long  dummy1, dummy2, dummy3, dummy4, dummy5;
+
+    LIST_HEAD(dma_list);
+    LIST_HEAD(high_list);
+    LIST_HEAD(normal_list);
+
+    unsigned long nr_reclaimed = 0;
+
+    struct zone* zone_dma = NULL;
+    struct zone* zone_normal = NULL;
+    struct zone* zone_highmem = NULL;
+
+    struct page *page;
+    struct zone* z;
+    list_for_each_entry(page, page_list, lru)
+        ClearPageActive(page);
+
+    while(!list_empty(page_list)) {
+        page = lru_to_page(page_list);
+        list_del(&page->lru);
+
+        z = page_zone(page);
+        if (is_dma(z)) {
+           zone_dma  = z;
+           list_add(&page->lru, &dma_list);
+        }
+		 if (is_highmem(z)) {
+            list_add(&page->lru, &high_list);
+            zone_highmem = z;
+		 } else if (is_normal(z)) {
+            zone_normal = z;
+            list_add(&page->lru, &normal_list);
+        }
+
+       if (zone_dma)
+            nr_reclaimed += shrink_page_list(&dma_list, zone_highmem, &sc,
+                     TTU_UNMAP|TTU_IGNORE_ACCESS,
+                     &dummy1, &dummy2, &dummy3, &dummy4, &dummy5, true);
+       if (zone_highmem)
+            nr_reclaimed += shrink_page_list(&normal_list, zone_normal, &sc,
+                    TTU_UNMAP|TTU_IGNORE_ACCESS,
+                    &dummy1, &dummy2, &dummy3, &dummy4, &dummy5, true);
+
+       if (zone_normal)
+            nr_reclaimed += shrink_page_list(&high_list, zone_highmem, &sc,
+                     TTU_UNMAP|TTU_IGNORE_ACCESS,
+                     &dummy1, &dummy2, &dummy3, &dummy4, &dummy5, true);
+	}
+
+	while (!list_empty(page_list)) {
+		page = lru_to_page(page_list);
+		list_del(&page->lru);
+
+		dec_zone_page_state(page, NR_ISOLATED_ANON + page_is_file_cache(page));
+		putback_lru_page(page);
+	}
+
+	return nr_reclaimed;
 }
 
 /*
