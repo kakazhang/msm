@@ -417,6 +417,11 @@ static int enter_state(suspend_state_t state)
 
 	if (suspend_test(TEST_FREEZER))
 		goto Finish;
+    /*kakazhang-2017-06-18 reset memory state when suspend*/
+    if (state > PM_SUSPEND_ON) {
+        printk(KERN_ERR "try to reset memory state\n");
+        try_to_reset_memory_state();
+    }
 
 	pr_debug("PM: Entering %s sleep\n", pm_states[state].label);
 	pm_restrict_gfp_mask();

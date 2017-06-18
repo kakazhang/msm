@@ -3918,6 +3918,99 @@ int scan_unevictable_handler(struct ctl_table *table, int write,
 	return 0;
 }
 
+/*kakazhang 2017-06-18 try to reset memory state if fragmentation is heavy*/
+#define ORDER_FOURTH 4
+static int get_fragmentation_avg(struct zone* zone) {
+    int order, inner, mtype;
+    unsigned long avg_total = 0;
+    unsigned long other_frag[MAX_ORDER];
+    unsigned long freepages[MAX_ORDER];
+    unsigned long totalfreepages;
+
+    unsigned long freecount = 0;
+    struct free_area *area;
+    struct list_head *curr;
+    unsigned long fragfactor = 0;
+
+    for (order = 0; order < MAX_ORDER; order++) {
+        freepages[order] = 0;
+        other_frag[order] = 0;
+    }
+
+    //get total free pages of each order in current zone
+    for (mtype = 0; mtype < MIGRATE_TYPES; mtype++) {
+		for (order = 0; order < MAX_ORDER; ++order) {
+           freecount = 0;
+
+			area = &(zone->free_area[order]);
+
+			list_for_each(curr, &area->free_list[mtype])
+				freecount++;
+
+            freepages[order] += freecount;
+		}
+	}
+
+    //calculate fragmentation base average of  (0~4) order
+    totalfreepages = global_page_state(NR_FREE_PAGES);
+    for (order = 0; order <= ORDER_FOURTH; order++) {
+        fragfactor = 0;
+        for (inner = order; inner < MAX_ORDER; inner++) {
+            fragfactor += (1 << inner) * freepages[inner];
+        }
+
+        other_frag[order] = (totalfreepages - fragfactor) * 100;
+        do_div(other_frag[order], totalfreepages);
+        avg_total += other_frag[order];
+    }
+
+    do_div(avg_total, ORDER_FOURTH+1);
+    return avg_total;
+}
+
+static unsigned long get_avg_fragment_zones(pg_data_t* pgdat) {
+    struct zone *zone;
+    struct zone *node_zones = pgdat->node_zones;
+    unsigned long flags;
+    unsigned long avg_frags= 0;
+
+    zone = node_zones + ZONE_DMA;
+    spin_lock_irqsave(&zone->lock, flags);
+    avg_frags = get_fragmentation_avg(zone);
+    spin_unlock_irqrestore(&zone->lock, flags);
+
+    return avg_frags;
+}
+
+static unsigned long get_avg_fragment_pgdat(void) {
+    unsigned long avg_frags = 0;
+    pg_data_t *pgdat = NULL;
+    int count = 0;
+
+	for (pgdat = first_online_pgdat();
+         pgdat;
+         pgdat = next_online_pgdat(pgdat)) {
+         avg_frags += get_avg_fragment_zones(pgdat);
+         count++;
+   }
+
+   if (count > 0)
+       do_div(avg_frags, count);
+   return avg_frags;
+}
+
+int try_to_reset_memory_state(void) {
+    unsigned long totalfreepages = 0;
+
+    if (get_avg_fragment_pgdat() > 90) {
+        pr_err("reset memory state\n");
+        totalfreepages = global_page_state(NR_FREE_PAGES);
+        //shrink_all_memory(totalfreepages);
+        drop_all_caches();
+    }
+    return 0;
+}
+
 #ifdef CONFIG_NUMA
 /*
  * per node 'scan_unevictable_pages' attribute.  On demand re-scan of
@@ -3939,7 +4032,6 @@ static ssize_t write_scan_unevictable_node(struct device *dev,
 	warn_scan_unevictable_pages();
 	return 1;
 }
-
 
 static DEVICE_ATTR(scan_unevictable_pages, S_IRUGO | S_IWUSR,
 			read_scan_unevictable_node,

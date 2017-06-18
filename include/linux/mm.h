@@ -1821,6 +1821,10 @@ extern int sysctl_drop_caches;
 int drop_caches_sysctl_handler(struct ctl_table *, int,
 					void __user *, size_t *, loff_t *);
 #endif
+/*try to drop all the caches*/
+extern int drop_all_caches(void);
+/*try to reset memory state*/
+extern int try_to_reset_memory_state(void);
 
 unsigned long shrink_slab(struct shrink_control *shrink,
 			  unsigned long nr_pages_scanned,
