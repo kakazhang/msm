@@ -5364,6 +5364,9 @@ done:
  * preempt must be disabled.
  */
 static int
+task_hot(struct task_struct *p, u64 now, struct sched_domain *sd);
+
+static int
 select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
 {
 	struct sched_domain *tmp, *affine_sd = NULL, *sd = NULL;
@@ -5372,9 +5375,17 @@ select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
 	int new_cpu = cpu;
 	int want_affine = 0;
 	int sync = wake_flags & WF_SYNC;
+    struct rq *prev_cpu_rq = NULL;
 
 	if (p->nr_cpus_allowed == 1)
 		return prev_cpu;
+
+    //kakazhang-2017-06-18 task hot, do not move task
+    if (cpu_online(prev_cpu)) {
+        prev_cpu_rq = cpu_rq(prev_cpu);
+        if (task_hot(p, prev_cpu_rq->clock_task, prev_cpu_rq->sd))
+            return prev_cpu;
+    }
 
 	if (sched_enable_hmp)
 		return select_best_cpu(p, prev_cpu, 0, sync);
