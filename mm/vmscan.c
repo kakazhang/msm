@@ -50,6 +50,7 @@
 
 #include <linux/swapops.h>
 #include <linux/balloon_compaction.h>
+#include <linux/workqueue.h>
 
 #include "internal.h"
 
@@ -3999,15 +4000,27 @@ static unsigned long get_avg_fragment_pgdat(void) {
    return avg_frags;
 }
 
+volatile int reclaim_init = 0;
+static struct work_struct worker;
+static void reclaim_work(struct work_struct *args) {
+	unsigned long totalfreepages = 0;
+    pr_err("reset memory state begin\n");
+    totalfreepages = global_page_state(NR_FREE_PAGES);
+    //shrink_all_memory(totalfreepages);
+    drop_all_caches();
+    pr_err("reset memory state done\n");
+}
+
 int try_to_reset_memory_state(void) {
-    unsigned long totalfreepages = 0;
+    if (!reclaim_init) {
+        INIT_WORK(&worker, reclaim_work);
+        reclaim_init = 1;
+    }
 
     if (get_avg_fragment_pgdat() > 90) {
-        pr_err("reset memory state\n");
-        totalfreepages = global_page_state(NR_FREE_PAGES);
-        //shrink_all_memory(totalfreepages);
-        drop_all_caches();
+        schedule_work(&worker);
     }
+
     return 0;
 }
 
