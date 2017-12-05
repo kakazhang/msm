@@ -212,7 +212,7 @@ int update_devfreq(struct devfreq *devfreq)
 		freq = devfreq->min_freq;
 		flags &= ~DEVFREQ_FLAG_LEAST_UPPER_BOUND; /* Use GLB */
 	}
-	if (devfreq->max_freq && freq > devfreq->max_freq) {
+	if ((devfreq->max_freq && freq > devfreq->max_freq) || devfreq->boost) {
 		freq = devfreq->max_freq;
 		flags |= DEVFREQ_FLAG_LEAST_UPPER_BOUND; /* Use LUB */
 	}
@@ -500,7 +500,8 @@ struct devfreq *devfreq_add_device(struct device *dev,
 	devfreq->previous_freq = profile->initial_freq;
 	devfreq->data = data;
 	devfreq->nb.notifier_call = devfreq_notifier_call;
-
+    /*kakazhang 2017-12-05 initialize boost value*/
+    devfreq->boost = 0;
 	devfreq->trans_table =	devm_kzalloc(dev, sizeof(unsigned int) *
 						devfreq->profile->max_state *
 						devfreq->profile->max_state,
@@ -983,6 +984,30 @@ static ssize_t show_trans_table(struct device *dev, struct device_attribute *att
 	return len;
 }
 
+/*kakazhang 2017-12-05 functions for show and store boost value*/
+static ssize_t store_boost(struct device *dev, struct device_attribute *attr,
+                const char *buf, size_t count)
+{
+    struct devfreq *df = to_devfreq(dev);
+    int value;
+    int ret;
+
+    ret = sscanf(buf, "%d", &value);
+    if (ret != 1)
+        return -EINVAL;
+
+    mutex_lock(&df->lock);
+    df->boost = value;
+    mutex_unlock(&df->lock);
+    return ret;
+}
+
+static ssize_t show_boost(struct device *dev, struct device_attribute *attr,
+			     char *buf)
+{
+    return sprintf(buf, "%d\n", to_devfreq(dev)->boost);
+}
+
 static struct device_attribute devfreq_attrs[] = {
 	__ATTR(governor, S_IRUGO | S_IWUSR, show_governor, store_governor),
 	__ATTR(available_governors, S_IRUGO, show_available_governors, NULL),
@@ -994,6 +1019,7 @@ static struct device_attribute devfreq_attrs[] = {
 	__ATTR(min_freq, S_IRUGO | S_IWUSR, show_min_freq, store_min_freq),
 	__ATTR(max_freq, S_IRUGO | S_IWUSR, show_max_freq, store_max_freq),
 	__ATTR(trans_stat, S_IRUGO, show_trans_table, NULL),
+   __ATTR(boost, S_IRUGO | S_IWUSR, show_boost, store_boost),
 	{ },
 };
 
